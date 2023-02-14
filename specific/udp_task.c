@@ -908,5 +908,5 @@ bool processReceivedDataUdp(int socket_fd, char *data, int length , struct socka
 }
 
 void udp_setup(void){
-	startGenericUdpTask(2048,9,processReceivedDataUdp);
+	startGenericUdpTask(2048,1,processReceivedDataUdp);
 }

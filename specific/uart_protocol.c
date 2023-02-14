@@ -19,7 +19,6 @@
 #include "freertos/task.h"
 #include "mqtt_publish.h"
 #include "cJSON.h"
-
 #include "pico_main.h"
 
 #include "esp_log.h"

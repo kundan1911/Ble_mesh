@@ -311,8 +311,7 @@ bool get_port_device_id(int body,int *device_id,int *port_number)
 // Change the state of single port
 int cloud_change_states(cJSON *body) {
 	
-	cJSON * subDeviceId = NULL;
-	subDeviceId = cJSON_GetObjectItem(body, "subDeviceId");
+
 
 	cJSON * port = NULL;
 	port = cJSON_GetObjectItem(body, "port");
@@ -323,18 +322,18 @@ int cloud_change_states(cJSON *body) {
 	cJSON * fanSpeed = NULL;
 	fanSpeed = cJSON_GetObjectItem(body, "fanspeed");
 
-	if(port == NULL || subDeviceId == NULL)
+	if(port == NULL)
 	{
 		return -2;
 	}
 	uint8_t port_number = port->valueint;
-	uint8_t sub_device_id = subDeviceId->valueint;
+	// uint8_t sub_device_id = subDeviceId->valueint;
 
 	if(state != NULL && fanSpeed == NULL)
 	{
 		uint8_t port_state = state->valueint;
 		printf("\nport_number - %d port_state - %d\n",port_number,port_state);
-		ble_send_command(sub_device_id,port_number,port_state);
+		ble_send_command(port_number,port_state);
 		//if(ae_change_states(sub_device_id,port_number, port_state)) {
 		//	return 1;
 		//}
@@ -343,7 +342,7 @@ int cloud_change_states(cJSON *body) {
 	{
 		uint16_t port_color_temp = colorTemperature->valueint;
 		printf("\nport_number - %d port_color_temp - %d\n",port_number,port_color_temp);
-		ble_send_command_color(sub_device_id,port_number,port_color_temp);
+		ble_send_command_color(port_number,port_color_temp);
 		// if(ae_set_color_temp(sub_device_id,port_number, port_color_temp)) {
 		// 	return 1;
 		// }
@@ -359,8 +358,8 @@ int cloud_change_states(cJSON *body) {
 
 		ESP_LOGE(TAG, "port_number id - %d fan_Speed - %d", port_number,fan_Speed);
 
-		int ret = set_bldc_fan_speed(sub_device_id,port_number, fan_Speed,pulse_time);
-		return ret;
+		// int ret = set_bldc_fan_speed(sub_device_id,port_number, fan_Speed,pulse_time);
+		// return ret;
 
 		// if (port_number > NUMBER_OF_MAX_SWITCHES || port_number < 0) return -1;
 		// if(set_bldc_fan_speed(sub_device_id,port_number, fan_Speed,pulse_time) == 1) {
@@ -1130,10 +1129,10 @@ int cloud_remove_group_address(cJSON *body) {
 //////////////////////////////////////////////////////////////// Command Type 39
 //
 int cloud_control_gear_search_ble(cJSON *body) {
-		start_provisioner_provisioning();
+	clear_all_recv_pkg_arr();
+		// start_provisioner_provisioning();
+		
 return 0;
-
-
 }
 //////////////////////////////////////////////////////////////// Command Type 40
 //
@@ -1142,21 +1141,31 @@ int cloud_control_gear_add_ble(cJSON *body) {
 	cJSON * cjson_dev_id = NULL;
 	cJSON * cjson_unicast_addr = NULL;
 	cJSON * cjson_addr = NULL;
-	cJSON* cjson_advType=NULL;
+	cJSON* cjson_addrType=NULL;
 	cJSON* cjson_bearer=NULL;
 
 	esp_err_t err;
 	cjson_dev_id = cJSON_GetObjectItem(body, "deviceUuid");
 	cjson_unicast_addr = cJSON_GetObjectItem(body, "unicastAddr");
 	cjson_addr = cJSON_GetObjectItem(body, "address");
-// cjson_advType=cJSON_GetObjectItem(body, "advType");
+cjson_addrType=cJSON_GetObjectItem(body, "addrType");
 cjson_bearer=cJSON_GetObjectItem(body, "bearer");
 
+	if(cjson_dev_id == NULL || cjson_unicast_addr == NULL || cjson_addr == NULL || cjson_bearer== NULL || cjson_addrType == NULL)
+	{
+		return -2;
+	}
+
 	char* hex_dev_id = cjson_dev_id->valuestring;
+	ESP_LOGI(TAG,"%s",hex_dev_id);
 	char* hex_addr = cjson_addr->valuestring;
+		ESP_LOGI(TAG,"%s",hex_addr);
 	uint16_t custom_node_uni_addr=cjson_unicast_addr->valueint;
 	// uint8_t advType=cjson_advType->valueint;
 	uint8_t bearer=cjson_bearer->valueint;
+	uint8_t addrType=cjson_addrType->valueint;
+	ESP_LOGI(TAG,"bearer %d",bearer);
+	ESP_LOGI(TAG,"addrType %d",addrType);
     uint8_t num_dev_id[16];
 	uint8_t num_addr[6];
 	dev_id_decode_hex(hex_dev_id,num_dev_id);
@@ -1197,7 +1206,7 @@ cjson_bearer=cJSON_GetObjectItem(body, "bearer");
 	}
 	return 0;
 	}
-	 err=esp_ble_mesh_provisioner_prov_device_with_addr(num_dev_id,num_addr,0,bearer,0,custom_node_uni_addr);
+	 err=esp_ble_mesh_provisioner_prov_device_with_addr(num_dev_id,num_addr,addrType,1,0,custom_node_uni_addr);
 	if (err) {
         ESP_LOGE(TAG, "%s: Add unprovisioned device into queue failed", __func__);
     }
@@ -1232,6 +1241,16 @@ int cloud_send_dest_addr_to_node(cJSON *body) {
 	
 }
 */
+//////////////////////////////////////////////////////////////// Command Type 43
+//
+int cloud_control_gear_info_ble(cJSON *body) {
+
+	// get_device_on_bus_enable_call(2);
+	get_node_on_bus_enable_call(1);
+
+	return true;
+	
+}
 void customFree(void *ptr) {
 	if (ptr != NULL)
 	{
@@ -1240,7 +1259,7 @@ void customFree(void *ptr) {
 }
 
 int process_commands(char *body) {
-	// ESP_LOGI(TAG, "data - %s",body);
+	ESP_LOGI(TAG, "data - %s",body);
 	//=============================SPC===========
 	char *jtoken = ":\"}";
 	char *key = "action";
@@ -1404,6 +1423,9 @@ int process_commands(char *body) {
 			break;
 		case 40:
 			ret = cloud_control_gear_add_ble(received_msg);
+			break;
+		case 43:
+			ret = cloud_control_gear_info_ble(received_msg);
 			break;
 		default:
 			break;

@@ -130,11 +130,13 @@ void stm_interrupt(){
 	for (;;)
 	{
 		//ble_send_command(1,1);
-		vTaskDelay(500);
-		continue;
+		vTaskDelay(10);
+	
 		//taskWatchDog();
 		ReceiveInterruptUartData();
 		//get_all_device_on_bus();
+		get_all_node_on_bus();
+		continue;
 		//sync_state_all_device();
 		// pulse_generator(esp_timer_get_time());
 		if(esp_timer_get_time() > Every5Seconds)
