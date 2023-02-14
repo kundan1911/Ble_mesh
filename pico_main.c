@@ -31,8 +31,8 @@
 //#define PERFORM_OTA_ON_BOOT
 
 #ifdef SET_NEW_WIFI_CRED
-#define WIFI_STA_SSID "office63"
-#define WIFI_STA_PASSWORD "office63"
+#define WIFI_STA_SSID "invincible"
+#define WIFI_STA_PASSWORD "12345678"
 //#define WIFI_STA_SSID "Sharma_Home"
 //#define WIFI_STA_PASSWORD "1234A701#"
 // #define WIFI_STA_SSID "Error505"
