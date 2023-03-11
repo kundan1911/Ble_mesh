@@ -106,7 +106,7 @@ int cnt = 0;
 void runEvery2Seconds(){
 	printf("cnt: %d\n", cnt);
 	//reportCommand();
-	if(wifi_sta_get_connected_status() || uc_wd_count++ < 30)
+	if(wifi_sta_get_connected_status() || uc_wd_count++ < 100)
 	{
 		gpio_set_level(GPIO_OUTPUT_IO_WD, cnt++ % 2);
 	}
@@ -129,14 +129,13 @@ void stm_interrupt(){
 	bool ConnectToWiFi = 0;
 	for (;;)
 	{
-		//ble_send_command(1,1);
+		// ble_send_command(1,1);
 		vTaskDelay(10);
 	
 		//taskWatchDog();
 		ReceiveInterruptUartData();
 		//get_all_device_on_bus();
 		get_all_node_on_bus();
-		continue;
 		//sync_state_all_device();
 		// pulse_generator(esp_timer_get_time());
 		if(esp_timer_get_time() > Every5Seconds)

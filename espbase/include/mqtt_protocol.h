@@ -5,7 +5,7 @@
 #include "mqtt_client.h"
 #include "esp_log.h"
 
-// #define WEB_SERVER "mqtt://192.168.1.28:1883" 
+// #define WEB_SERVER "mqtt://192.168.0.189:1883" 
 #define WEB_SERVER "mqtts://mqtt.picostone.com" /*PicoStone Main Server */ 
 #define KEEPALIVE_TIMEOUT 10
 

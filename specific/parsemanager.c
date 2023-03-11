@@ -30,7 +30,7 @@
 # include "esp_ble_mesh_defs.h"
 #include "esp_ble_mesh_provisioning_api.h"
 #include "ble_mesh.h"
-
+#include "ble_mesh_protocol.h"
 static const char *TAG = "parsemanager";
 
 
@@ -326,14 +326,18 @@ int cloud_change_states(cJSON *body) {
 	{
 		return -2;
 	}
-	uint8_t port_number = port->valueint;
+	uint8_t port_number = port->valueint-10;
+	// port_number=26;
 	// uint8_t sub_device_id = subDeviceId->valueint;
 
 	if(state != NULL && fanSpeed == NULL)
 	{
 		uint8_t port_state = state->valueint;
 		printf("\nport_number - %d port_state - %d\n",port_number,port_state);
-		ble_send_command(port_number,port_state);
+
+		snd_mssg_to_vnd_srv(port_number);
+		// sendAndReceiveBleData(port_number,port_state,0);
+		// ble_send_onoff_command(port_number,port_state);
 		//if(ae_change_states(sub_device_id,port_number, port_state)) {
 		//	return 1;
 		//}
@@ -342,7 +346,8 @@ int cloud_change_states(cJSON *body) {
 	{
 		uint16_t port_color_temp = colorTemperature->valueint;
 		printf("\nport_number - %d port_color_temp - %d\n",port_number,port_color_temp);
-		ble_send_command_color(port_number,port_color_temp);
+		// ble_send_command_color(port_number,port_color_temp);
+		sendAndReceiveBleData(port_number,port_color_temp,1);
 		// if(ae_set_color_temp(sub_device_id,port_number, port_color_temp)) {
 		// 	return 1;
 		// }
@@ -1166,6 +1171,7 @@ cjson_bearer=cJSON_GetObjectItem(body, "bearer");
 	uint8_t addrType=cjson_addrType->valueint;
 	ESP_LOGI(TAG,"bearer %d",bearer);
 	ESP_LOGI(TAG,"addrType %d",addrType);
+	ESP_LOGI(TAG,"unicast %d",custom_node_uni_addr);
     uint8_t num_dev_id[16];
 	uint8_t num_addr[6];
 	dev_id_decode_hex(hex_dev_id,num_dev_id);

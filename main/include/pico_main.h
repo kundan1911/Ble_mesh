@@ -18,5 +18,5 @@ char RUNNING_PARTITION[6];
 
 QueueHandle_t stm_interrupt_message_queue;
 QueueHandle_t Uart_message_queue;
-
+QueueHandle_t Ble_message_ack_queue;
 #endif
