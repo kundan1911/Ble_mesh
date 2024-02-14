@@ -1,6 +1,5 @@
 set(srcs "main.c"
-    "board.c"
-    "uart_handler.c")
+    "board.c")
 
-idf_component_register(SRCS "${srcs}"
+idf_component_register(SRCS "nvsHeader.c" "${srcs}"
                     INCLUDE_DIRS  ".")

@@ -28,17 +28,71 @@ char ending_delimiter = '-';
 int UARTProDataLength = 70;
 xSemaphoreHandle temp;
 volatile bool completedReceiving = false;
-uint8_t byteVal[2];
 
-uint8_t savAndDochcksm(uint8_t brigtness,uint16_t datacolor){
-	byteVal[1] = datacolor & 0x00FF; // low byte (0x34)
+// char* toBeSendData[]={0x28,0x88,0x13,0x88,0x13,0xA1};
+// char* toBeSendData2[]={0x88,0x13,0x88,0x13,0xC9};
+// char getXOR(struct protocolData *toBeSendData)
+// {
+// 	char xor = (char)(toBeSendData->device_id);
+// 	xor = xor ^ (char)(toBeSendData->rc_code);
+// 	xor = xor ^ (char)(toBeSendData->id);
+// 	int i=0;
+// 	for(;i<toBeSendData->length;i++)
+// 	{
+// 		xor = xor ^ (toBeSendData->data)[i];
+// 	}
+// 	return xor;
+// }
+// void protocolUARTSend(struct protocolData *toBeSendData) {
+// 	uart_write_bytes(UART_UC_IF, &starting_delimiter, 1);
+// 	uart_write_bytes(UART_UC_IF, (char *)&(toBeSendData->length), 1);
+// 	uart_write_bytes(UART_UC_IF, (char *)&(toBeSendData->device_id), 1);
+// 	uart_write_bytes(UART_UC_IF, (char *)&(toBeSendData->rc_code), 1);
+// 	uart_write_bytes(UART_UC_IF, (char *)&(toBeSendData->id), 1);
+// 	uart_write_bytes(UART_UC_IF, toBeSendData->data, toBeSendData->length);
+// 	char a = getXOR(toBeSendData);
+// 	uart_write_bytes(UART_UC_IF, &a, 1);
+// 	uart_write_bytes(UART_UC_IF, &ending_delimiter, 1);
+// 	uart_wait_tx_done(UART_UC_IF, 1000);
+// 	printf("Data Sent\n");
+// }
+
+uint8_t checksum(uint8_t* data){
+	uint8_t chksum=0;
+	for(int i=0;i<4;i++){
+		chksum+=data[i];
+	}
+	chksum=~chksum;
+	return chksum;
+}
+void protocolUARTSend() {
+	uint8_t starting_delimiter = 0x0D;
+	uart_write_bytes(UART_UC_IF, &starting_delimiter, 1);
+	printf("Data Sent\n");
+}
+void protocolUARTSend2() {
+	uint8_t starting_delimiter = 0x28;
+	uart_write_bytes(UART_UC_IF, &starting_delimiter, 1);
+	starting_delimiter = 0x1C;
+	uart_write_bytes(UART_UC_IF, &starting_delimiter, 1);
+	 starting_delimiter = 0x0C;
+	uart_write_bytes(UART_UC_IF, &starting_delimiter, 1);
+	 starting_delimiter = 0x64;
+	uart_write_bytes(UART_UC_IF, &starting_delimiter, 1);
+	 starting_delimiter = 0x00;
+	uart_write_bytes(UART_UC_IF, &starting_delimiter, 1);
+	 starting_delimiter = 0x4B;
+	uart_write_bytes(UART_UC_IF, &starting_delimiter, 1);
+	printf("light transaction 2 Sended\n");
+}
+void protocolUARTSend3(uint8_t colortemp,uint8_t brigtness) {
+	uint16_t datacolor=3000 + colortemp;
+	uint8_t byteVal[2];
+
 byteVal[0] = datacolor >> 8;     // high byte (0x12)
-
+byteVal[1] = datacolor & 0x00FF; // low byte (0x34)
 uint8_t chksum=byteVal[0]+byteVal[1]+brigtness;
 chksum=~chksum;
-return chksum;
-}
-void uartWrite(uint8_t chksum,uint8_t brigtness){
 uint8_t starting_delimiter = byteVal[1];
 	uart_write_bytes(UART_UC_IF, &starting_delimiter, 1);
 	 starting_delimiter = byteVal[0];
@@ -49,59 +103,7 @@ uint8_t starting_delimiter = byteVal[1];
 	uart_write_bytes(UART_UC_IF, &starting_delimiter, 1);
 	 starting_delimiter =chksum ;
 	uart_write_bytes(UART_UC_IF, &starting_delimiter, 1);
-}
-void protocolUARTSend() {
-	uint8_t starting_delimiter = 0x0D;
-	uart_write_bytes(UART_UC_IF, &starting_delimiter, 1);
-	printf("Data Sent\n");
-}
-void protocolUARTSend2(uint8_t delay) {
-	uint8_t starting_delimiter = delay;
-	uart_write_bytes(UART_UC_IF, &starting_delimiter, 1);
-	// starting_delimiter = 0x1C;
-	// uart_write_bytes(UART_UC_IF, &starting_delimiter, 1);
-	//  starting_delimiter = 0x0C;
-	// uart_write_bytes(UART_UC_IF, &starting_delimiter, 1);
-	//  starting_delimiter = 0x64;
-	// uart_write_bytes(UART_UC_IF, &starting_delimiter, 1);
-	//  starting_delimiter = 0x00;
-	// uart_write_bytes(UART_UC_IF, &starting_delimiter, 1);
-	//  starting_delimiter = 0x4B;
-	// uart_write_bytes(UART_UC_IF, &starting_delimiter, 1);
-	byteVal[1]=0x1C;
-	byteVal[0]=0x0C;
-uint8_t chksum=byteVal[0]+byteVal[1]+0x64+delay;
-chksum=~chksum;
-	uartWrite(chksum,0x64);
-	printf("light transaction 2 Sended\n");
-}
-void protocolUARTSend3(uint8_t colortemp,uint8_t brigtness) {
-	uint16_t datacolor=3000 + colortemp;
-	uint8_t cheksum=savAndDochcksm(brigtness,datacolor);
-
-// uint8_t starting_delimiter = byteVal[1];
-// 	uart_write_bytes(UART_UC_IF, &starting_delimiter, 1);
-// 	 starting_delimiter = byteVal[0];
-// 	uart_write_bytes(UART_UC_IF, &starting_delimiter, 1);
-// 	 starting_delimiter = brigtness;
-// 	uart_write_bytes(UART_UC_IF, &starting_delimiter, 1);
-// 	 starting_delimiter = 0x00;
-// 	uart_write_bytes(UART_UC_IF, &starting_delimiter, 1);
-// 	 starting_delimiter =chksum ;
-// 	uart_write_bytes(UART_UC_IF, &starting_delimiter, 1);
-uartWrite(cheksum,brigtness);
-	printf("light transaction 3 Sended and chksum is %d\n",cheksum);
-}
-void provision_blink(){
-	protocolUARTSend();
-	    vTaskDelay(250);
-	protocolUARTSend2(0x01);
-	  vTaskDelay(100);
-uint8_t cheksum=savAndDochcksm(100,3000);
-uartWrite(cheksum,100);
-vTaskDelay(50);
-cheksum=savAndDochcksm(0,3000);
-uartWrite(cheksum,0);
+	printf("light transaction 3 Sended and chksum is %d\n",chksum);
 }
 static void uart_event_task(void *pvParameters)
 {
