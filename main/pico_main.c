@@ -31,8 +31,8 @@
 //#define PERFORM_OTA_ON_BOOT
 
 #ifdef SET_NEW_WIFI_CRED
-#define WIFI_STA_SSID "pico_dev"
-#define WIFI_STA_PASSWORD "picopico"
+#define WIFI_STA_SSID "realme X2"
+#define WIFI_STA_PASSWORD "deepak100"
 //#define WIFI_STA_SSID "Sharma_Home"
 //#define WIFI_STA_PASSWORD "1234A701#"
 // #define WIFI_STA_SSID "Error505"
@@ -59,11 +59,15 @@ void app_main() {
 	#endif
 
 	//Retrieve Device ID From NVS
-	memset(DEVICE_ID,0,sizeof(DEVICE_ID));
-	if (nvs_get_dev_id(DEVICE_ID)!=ESP_OK) {
-	 	esp_restart();
+	
+	// memset(DEVICE_ID,0,sizeof(DEVICE_ID));
+	// if (nvs_get_dev_id(DEVICE_ID)!=ESP_OK) {
+	//  	esp_restart();
+	// }
+	char* str="MASW0100001AA121";
+	for(int i=0;i<17;i++){
+		DEVICE_ID[i]=str[i];
 	}
-
 	wifi_sta_get_mac(DEVICE_MAC_STR);
 
 	
