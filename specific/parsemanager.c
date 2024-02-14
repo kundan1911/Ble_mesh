@@ -311,8 +311,6 @@ bool get_port_device_id(int body,int *device_id,int *port_number)
 // Change the state of single port
 int cloud_change_states(cJSON *body) {
 	
-
-
 	cJSON * port = NULL;
 	port = cJSON_GetObjectItem(body, "port");
 	cJSON * state = NULL;
@@ -326,17 +324,17 @@ int cloud_change_states(cJSON *body) {
 	{
 		return -2;
 	}
-	uint8_t port_number = port->valueint-10;
-	// port_number=26;
-	// uint8_t sub_device_id = subDeviceId->valueint;
-
+	uint16_t port_number = port->valueint;
+	// uint8_t port_number=12;
+	// port_number=0x0016;
 	if(state != NULL && fanSpeed == NULL)
 	{
 		uint8_t port_state = state->valueint;
-		printf("\nport_number - %d port_state - %d\n",port_number,port_state);
+		printf("\ggggggggggggggggg - %d port_state - %d\n",port_number,port_state);
 
-		snd_mssg_to_vnd_srv(port_number);
-		// sendAndReceiveBleData(port_number,port_state,0);
+		// snd_mssg_to_vnd_srv(port_number);
+		
+		sendAndReceiveBleData(port_number,port_state,0);
 		// ble_send_onoff_command(port_number,port_state);
 		//if(ae_change_states(sub_device_id,port_number, port_state)) {
 		//	return 1;
@@ -760,36 +758,37 @@ int cloudChangeStates_time(cJSON *body) {
 //
 int cloud_set_group_address(cJSON *body) {
 	
-	cJSON * subDeviceId = NULL;
-	subDeviceId = cJSON_GetObjectItem(body, "subDeviceId");
+	// cJSON * subDeviceId = NULL;
+	// subDeviceId = cJSON_GetObjectItem(body, "subDeviceId");
 	cJSON * port = NULL;
 	port = cJSON_GetObjectItem(body, "port");
 	cJSON * groupId = NULL;
 	groupId = cJSON_GetObjectItem(body, "groupId");
-	cJSON * active = NULL;
-	active = cJSON_GetObjectItem(body, "active");
+	// cJSON * active = NULL;
+	// active = cJSON_GetObjectItem(body, "active");
 
-	if(subDeviceId == NULL || port == NULL || groupId == NULL)
+	if(port == NULL || groupId == NULL)
 	{
 		return -2;
 	}
-
-	
-	uint8_t sub_device_id = subDeviceId->valueint;
 	uint8_t port_number = port->valueint;
-	uint8_t group_number = groupId->valueint;
+	uint16_t group_number = groupId->valueint;
 
-	uint8_t active_state = 1;
-	if(active != NULL)
-	{
-		active_state = active->valueint;
-	}
-	printf("\nport_number id - %d group_number - %d",port_number,group_number);
+
+	printf("\port_number id - %d group_number - %d",port_number,group_number);
 
 	// if (port_number > NUMBER_OF_MAX_SWITCHES || port_number < 0) return -1;
-	if(ae_group_addr_set(sub_device_id,port_number, group_number, active_state)) {
-		return 1;
-	}
+	uint8_t err=mqtt_snd_mssg_to_vnd_srv(port_number,group_number);
+	// if(active != NULL)
+	// {
+	// 	active_state = active->valueint;
+	// }
+	printf("vendor return %d",err);
+
+	// // if (port_number > NUMBER_OF_MAX_SWITCHES || port_number < 0) return -1;
+	// if(ae_group_addr_set(sub_device_id,port_number, group_number, active_state)) {
+	// 	return 1;
+	// }
 	return 0;
 	
 }
@@ -1119,11 +1118,12 @@ int cloud_remove_group_address(cJSON *body) {
 
 	uint8_t sub_device_id = subDeviceId->valueint;
 	uint8_t port_number = port->valueint;
-	uint8_t group_number = groupId->valueint;
+	uint16_t group_number = groupId->valueint;
 
 	printf("\port_number id - %d group_number - %d",port_number,group_number);
 
 	// if (port_number > NUMBER_OF_MAX_SWITCHES || port_number < 0) return -1;
+	mqtt_snd_mssg_to_vnd_srv(port_number,group_number);
 	if(ae_group_addr_set(sub_device_id,port_number, group_number, 0)) {
 		return 1;
 	}
@@ -1134,7 +1134,7 @@ int cloud_remove_group_address(cJSON *body) {
 //////////////////////////////////////////////////////////////// Command Type 39
 //
 int cloud_control_gear_search_ble(cJSON *body) {
-	clear_all_recv_pkg_arr();
+	control_gear_search_ble_enable(1);
 		// start_provisioner_provisioning();
 		
 return 0;
@@ -1143,25 +1143,25 @@ return 0;
 //
 int cloud_control_gear_add_ble(cJSON *body) {
 // esp_ble_mesh_provisioner_prov_enable(1);
-	cJSON * cjson_dev_id = NULL;
+	cJSON * cjson_uuid = NULL;
 	cJSON * cjson_unicast_addr = NULL;
 	cJSON * cjson_addr = NULL;
 	cJSON* cjson_addrType=NULL;
 	cJSON* cjson_bearer=NULL;
 
 	esp_err_t err;
-	cjson_dev_id = cJSON_GetObjectItem(body, "deviceUuid");
+	cjson_uuid = cJSON_GetObjectItem(body, "deviceUuid");
 	cjson_unicast_addr = cJSON_GetObjectItem(body, "unicastAddr");
 	cjson_addr = cJSON_GetObjectItem(body, "address");
 cjson_addrType=cJSON_GetObjectItem(body, "addrType");
 cjson_bearer=cJSON_GetObjectItem(body, "bearer");
 
-	if(cjson_dev_id == NULL || cjson_unicast_addr == NULL || cjson_addr == NULL || cjson_bearer== NULL || cjson_addrType == NULL)
+	if(cjson_uuid == NULL || cjson_unicast_addr == NULL || cjson_addr == NULL || cjson_bearer== NULL || cjson_addrType == NULL)
 	{
 		return -2;
 	}
 
-	char* hex_dev_id = cjson_dev_id->valuestring;
+	char* hex_dev_id = cjson_uuid->valuestring;
 	ESP_LOGI(TAG,"%s",hex_dev_id);
 	char* hex_addr = cjson_addr->valuestring;
 		ESP_LOGI(TAG,"%s",hex_addr);
@@ -1252,8 +1252,71 @@ int cloud_send_dest_addr_to_node(cJSON *body) {
 int cloud_control_gear_info_ble(cJSON *body) {
 
 	// get_device_on_bus_enable_call(2);
-	get_node_on_bus_enable_call(1);
+	cJSON * cjson_count_prov = NULL;
+	// cjson_count_prov = cJSON_GetObjectItem(body, "provNodeCount");
+	if(cjson_count_prov == NULL)
+	{
+		return -2;
+	}
+	get_node_on_bus_enable_call(1,2);
+	
 
+	return true;
+	
+}
+
+//////////////////////////////////////////////////////////////// Command Type 44
+//
+int cloud_control_delete_ble(cJSON *body) {
+	esp_err_t err;
+	cJSON * cjson_unicast_addr = NULL;
+	cjson_unicast_addr = cJSON_GetObjectItem(body, "unicastAddr");
+	if(cjson_unicast_addr == NULL)
+	{
+		return -2;
+	}
+	uint16_t unicastAddr=cjson_unicast_addr->valueint;
+	err=deleteBleDevice(unicastAddr);
+	return true;
+	
+}
+//////////////////////////////////////////////////////////////// Command Type 45
+//
+int cloud_control_add_provisioned_ble_device(cJSON *body) {
+	uint8_t num_uuid[16],devKey[16],num_addr[6];
+	uint16_t custom_node_uni_addr;
+	uint8_t addrType,netIdx,err;
+	cJSON *cjson_uuid = NULL,*cjson_unicast_addr = NULL,*cjson_addr = NULL,*cjson_addrType=NULL,*cjson_dev_key=NULL,*cjson_net_idx = NULL;
+	char *hex_uuid=NULL,*hex_addr=NULL,*hex_devKey=NULL;
+
+
+	cjson_uuid = cJSON_GetObjectItem(body, "deviceUuid");
+	cjson_unicast_addr = cJSON_GetObjectItem(body, "unicastAddr");
+	cjson_net_idx=cJSON_GetObjectItem(body, "netIdx");
+	cjson_addr = cJSON_GetObjectItem(body, "address");
+cjson_addrType=cJSON_GetObjectItem(body, "addrType");
+cjson_dev_key=cJSON_GetObjectItem(body, "devKey");
+if(cjson_uuid == NULL || cjson_unicast_addr == NULL || cjson_addr == NULL || cjson_dev_key== NULL || cjson_addrType == NULL || cjson_net_idx == NULL)
+	{
+		return -2;
+	}
+	hex_uuid = cjson_uuid->valuestring;
+	ESP_LOGI(TAG,"%s",hex_uuid);
+	hex_addr = cjson_addr->valuestring;
+		ESP_LOGI(TAG,"%s",hex_addr);
+	hex_devKey = cjson_dev_key->valuestring;
+		ESP_LOGI(TAG,"%s",hex_devKey);
+
+	 custom_node_uni_addr=cjson_unicast_addr->valueint;
+	 addrType=cjson_addrType->valueint;
+	 netIdx=cjson_net_idx->valueint;
+	ESP_LOGI(TAG,"addrType %d",addrType);
+	ESP_LOGI(TAG,"unicast %d",custom_node_uni_addr);
+    
+	dev_id_decode_hex(hex_uuid,num_uuid);
+	dev_id_decode_hex(hex_addr,num_addr);
+	dev_id_decode_hex(hex_devKey,devKey);
+	err=addProvisionedNode(num_addr,num_uuid,custom_node_uni_addr,netIdx,devKey,addrType);
 	return true;
 	
 }
@@ -1432,6 +1495,12 @@ int process_commands(char *body) {
 			break;
 		case 43:
 			ret = cloud_control_gear_info_ble(received_msg);
+			break;
+		case 44:
+			ret = cloud_control_delete_ble(received_msg);
+			break;
+		case 45:
+			ret = cloud_control_add_provisioned_ble_device(received_msg);
 			break;
 		default:
 			break;

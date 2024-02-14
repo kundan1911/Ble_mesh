@@ -46,7 +46,7 @@ void pushAckToQueue(nodeAck ackw){
 return;
 }
 nodeAck recvAck;
-uint8_t sendAndReceiveBleData(uint8_t deviceId,uint16_t data,uint8_t type){
+uint8_t sendAndReceiveBleData(uint16_t deviceId,uint16_t data,uint8_t type){
 
 if (temp == NULL) {
 		temp = xSemaphoreCreateMutex();
@@ -56,10 +56,17 @@ if( xSemaphoreTake( temp, 1000 ) != pdTRUE )
 	{
 		return 0;
 	}
-
+	xQueueReset(Ble_message_ack_queue);
+if( type<=1 ){
 assignMssgParameterValues(data,type);
-xQueueReset(Ble_message_ack_queue);
-	sendMessageToNode(ESP_BLE_MESH_MODEL_ID_LIGHT_CTL_CLI,deviceId,(void *)&set_state);
+printf( "sendAndReceiveBleData device Id %d",deviceId);
+sendMessageToNode(ESP_BLE_MESH_MODEL_ID_LIGHT_CTL_CLI,deviceId,(void *)&set_state);
+}
+else{
+get_node_on_bus_enable_call(data,0);
+}
+
+	
 
 	int64_t xTime1;
 	xTime1 = esp_timer_get_time();
@@ -70,6 +77,7 @@ xQueueReset(Ble_message_ack_queue);
 			if(recvAck.desAddr == deviceId)
 			{
 				printf("received ack");
+				// pushProvNodeToMqtt(recvAck.desAddr);
 				xSemaphoreGive(temp);
 				return recvAck.err;
 			}
@@ -80,12 +88,13 @@ xQueueReset(Ble_message_ack_queue);
 	}
 	}
 	printf( "Ble Receive Timeout");
+	xQueueReset(Ble_message_ack_queue);
 	xSemaphoreGive(temp);
 	return 0;
   }
 
 
-  void ble_setup() {
+  void ble_mssg_queue_setup() {
 	Ble_message_ack_queue = xQueueCreate(5, sizeof( struct nodeAck * ));
 	if(Ble_message_ack_queue == 0){
 		printf("queue not created");

@@ -141,10 +141,11 @@ void stm_interrupt(){
 		if(esp_timer_get_time() > Every5Seconds)
 		{
 			Every5Seconds = esp_timer_get_time() + 15000000;
-			//runEvery5Seconds();
+			
 		}
 		if(esp_timer_get_time() > Every2Seconds)
 		{
+			runEvery5Seconds();
 			Every2Seconds = esp_timer_get_time() + 2000000;
 			runEvery2Seconds();
 			// ir_send();

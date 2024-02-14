@@ -243,11 +243,11 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
 
 static void mqtt_app_start(void)
 {
-    memset(SERVER_PASSWORD,0,sizeof(SERVER_PASSWORD));
-	if (nvs_get_srv_password(SERVER_PASSWORD)) {
-		ESP_LOGE(TAG, "Server Password Retrieve Failed");
-		esp_restart();
-	}
+    // memset(SERVER_PASSWORD,0,sizeof(SERVER_PASSWORD));
+	// if (nvs_get_srv_password(SERVER_PASSWORD)) {
+	// 	ESP_LOGE(TAG, "Server Password Retrieve Failed");
+	// 	esp_restart();
+	// }
     char mqtt_topic[60];
 	memset(mqtt_topic,0,60);
     sprintf(mqtt_topic,"/device/%s/%s",DEVICE_ID,"status");

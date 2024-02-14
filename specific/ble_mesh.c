@@ -10,7 +10,7 @@
 #include <string.h>
 #include "ble_mesh.h"
 #include "esp_log.h"
-#include "nvs_flash.h"
+// #include "nvs_flash.h"
 #include "esp_timer.h"
 #include "esp_ble_mesh_defs.h"
 #include "esp_ble_mesh_common_api.h"
@@ -18,7 +18,8 @@
 #include "esp_ble_mesh_networking_api.h"
 #include "esp_ble_mesh_config_model_api.h"
 #include "esp_ble_mesh_generic_model_api.h"
-
+#include "esp_ble_mesh_local_data_operation_api.h"
+#include "transport.h"
 #include "esp_ble_mesh_lighting_model_api.h"
 #include "ble_mesh_example_init.h"
 #include "ble_mesh_protocol.h"
@@ -27,10 +28,10 @@
 #include "freertos/task.h"
 #include "esp_system.h"
 #include "esp_bt.h"
-uint8_t* already_push_to_mqtt[5];
-int count_of_present_dev_id=0;
+#include "provisioner_main.h"
 
-#define TAG "EXAMPLE"
+
+#define TAG "Provisioner"
 
 #define LED_OFF             0x0
 #define LED_ON              0x1
@@ -48,9 +49,8 @@ int count_of_present_dev_id=0;
 
 #define APP_KEY_IDX         0x0000
 #define APP_KEY_OCTET       0x12
-
 #define NET_KEY_Octet       0x13
-
+#define acceptPkgCunt       0x0f
 // for generic onoff and vendor 
 #define ESP_BLE_MESH_VND_MODEL_ID_CLIENT    0x0000
 #define ESP_BLE_MESH_VND_MODEL_ID_SERVER    0x0001
@@ -58,17 +58,16 @@ int count_of_present_dev_id=0;
 #define ESP_BLE_MESH_VND_MODEL_OP_SEND      ESP_BLE_MESH_MODEL_OP_3(0x00, CID_ESP)
 #define ESP_BLE_MESH_VND_MODEL_OP_STATUS    ESP_BLE_MESH_MODEL_OP_3(0x01, CID_ESP)
 
-// ESP_BLE_MESH_MODEL_PUB_DEFINE(onoff_pub_0, 2 + 3, ROLE_NODE);
-// static esp_ble_mesh_gen_onoff_srv_t onoff_server_0 = {
-//     .rsp_ctrl.get_auto_rsp = ESP_BLE_MESH_SERVER_AUTO_RSP,
-//     .rsp_ctrl.set_auto_rsp = ESP_BLE_MESH_SERVER_AUTO_RSP,
-// };
+esp_timer_handle_t pkgTimer;
 
 uint8_t get_node_on_bus_enable = 0;
 uint8_t get_node_on_bus_current_count = 0;
-
+uint8_t prov_node_total_count =0;
+uint8_t unprov_pkg_to_mqtt = 0;
+uint8_t retransTime;
 static uint8_t dev_uuid[16];
-
+uint8_t* already_push_to_mqtt[acceptPkgCunt];
+int count_of_present_dev_id=0;
 typedef struct {
     uint8_t  uuid[16];
     uint16_t unicast;
@@ -102,8 +101,8 @@ static esp_ble_mesh_client_t vendor_client = {
 
 
 static esp_ble_mesh_model_op_t vnd_op[] = {
-    ESP_BLE_MESH_MODEL_OP(ESP_BLE_MESH_VND_MODEL_OP_SEND, 0),
-    ESP_BLE_MESH_MODEL_OP(ESP_BLE_MESH_VND_MODEL_OP_STATUS, 0),
+    // ESP_BLE_MESH_MODEL_OP(ESP_BLE_MESH_VND_MODEL_OP_SEND, 0),
+    ESP_BLE_MESH_MODEL_OP(ESP_BLE_MESH_VND_MODEL_OP_STATUS, 2),
     ESP_BLE_MESH_MODEL_OP_END,
 };
 
@@ -143,13 +142,12 @@ static esp_ble_mesh_cfg_srv_t config_server = {
 static esp_ble_mesh_model_t root_models[] = {
     ESP_BLE_MESH_MODEL_CFG_SRV(&config_server),
     ESP_BLE_MESH_MODEL_CFG_CLI(&config_client),
-    //  ESP_BLE_MESH_MODEL_GEN_ONOFF_SRV(&onoff_pub_0, &onoff_server_0),
+      //  ESP_BLE_MESH_MODEL_GEN_ONOFF_SRV(&onoff_pub_0, &onoff_server_0),
      ESP_BLE_MESH_MODEL_GEN_ONOFF_CLI(&onoff_cli_pub, &onoff_client),
     ESP_BLE_MESH_MODEL_LIGHT_CTL_CLI(&light_cli_pub, &ctl_client),
 };
 
 static esp_ble_mesh_elem_t elements[] = {
-    // ESP_BLE_MESH_ELEMENT(0, root_models, vnd_models),
     ESP_BLE_MESH_ELEMENT(0,root_models,vnd_models),
 };
 
@@ -175,35 +173,99 @@ static esp_ble_mesh_prov_t provision = {
 
 void default_push_to_mqtt(){
    cJSON * node_info=cJSON_CreateObject();
+   ESP_LOGI(TAG,"default not mqtt");
+    cJSON_AddItemToObject(node_info,"devKey" , cJSON_CreateString(""));
     cJSON_AddItemToObject(node_info,"deviceUuid" , cJSON_CreateString(""));
     cJSON_AddItemToObject(node_info, "address", cJSON_CreateString(""));
     cJSON_AddItemToObject(node_info,"addrType" , cJSON_CreateNumber(0));
     cJSON_AddItemToObject(node_info,"bearer" , cJSON_CreateNumber(0));
+     cJSON_AddItemToObject(node_info,"unicastAddr" , cJSON_CreateNumber(0));
+    cJSON_AddItemToObject(node_info,"netIdx" , cJSON_CreateNumber(0));
     cJSON_AddItemToObject(node_info,"InfoType" , cJSON_CreateNumber(0));
 
     char* cjson_node_info=cJSON_Print(node_info);
-    postBleDeviceInfo(cjson_node_info);
+     postBleDeviceInfo(cjson_node_info);
+    cJSON_Delete(node_info);  
+}
+static esp_err_t example_ble_mesh_set_msg_common_tt(esp_ble_mesh_client_common_param_t *common,
+                                                 uint16_t unicast,
+                                                 esp_ble_mesh_model_t *model, uint32_t opcode)
+{
+    if (!common || !model) {
+        return ESP_ERR_INVALID_ARG;
+    }
+ 
+
+    common->opcode = opcode;
+    common->model = model;
+    common->ctx.net_idx = prov_key.net_idx;
+    common->ctx.app_idx = prov_key.app_idx;
+    common->ctx.addr = unicast;
+    common->ctx.send_ttl = MSG_SEND_TTL;
+    common->ctx.send_rel = MSG_SEND_REL;
+    common->msg_timeout = MSG_TIMEOUT;
+    common->msg_role = MSG_ROLE;
+
+    return ESP_OK;
+}
+static esp_err_t vendor_set_msg_common_tt(esp_ble_mesh_msg_ctx_t *common,
+                                                 uint16_t unicast)
+{
+    if (!common ) {
+        return ESP_ERR_INVALID_ARG;
+    }
+ 
+    common->net_idx = prov_key.net_idx;
+    common->app_idx = prov_key.app_idx;
+    common->addr = unicast;
+    common->send_ttl = MSG_SEND_TTL;
+    common->send_rel = MSG_SEND_REL;
+    return ESP_OK;
 }
 
- esp_err_t snd_mssg_to_vnd_srv(uint16_t ndAddr){
-    // esp_ble_mesh_provisioner_bind_app_key_to_local_model(PROV_OWN_ADDR, prov_key.app_idx,
-    //                 ESP_BLE_MESH_VND_MODEL_ID_CLIENT, CID_ESP);
-    // esp_ble_mesh_provisioner_bind_app_key_to_local_model(PROV_OWN_ADDR, prov_key.app_idx,
-    //                 ESP_BLE_MESH_VND_MODEL_ID_CLIENT, CID_ESP);
-    // esp_ble_mesh_provisioner_prov_enable(ESP_BLE_MESH_PROV_GATT);
-    esp_ble_mesh_msg_ctx_t ctx = {0};
+uint32_t prev_vnd_id;
+//  esp_err_t snd_mssg_to_vnd_srv(uint16_t ndAddr){
+//     esp_ble_mesh_msg_ctx_t commonContext = {0};
+//     esp_err_t err;
+//     uint32_t opcode=ESP_BLE_MESH_VND_MODEL_OP_SEND;
+//     // err=vendor_set_msg_common_tt(&commonContext,ndAddr);
+//     commonContext.net_idx = prov_key.net_idx;
+//     commonContext.app_idx = prov_key.app_idx;
+//     commonContext.addr = ndAddr;
+//     commonContext.send_ttl = MSG_SEND_TTL;
+//     commonContext.send_rel = MSG_SEND_REL;
+//     uint8_t mssg[]={0xff,0xff};
+//     retransTime++;
+//     err = esp_ble_mesh_client_model_send_msg(vendor_client.model, &commonContext, opcode,
+//             2, mssg, MSG_TIMEOUT, true, MSG_ROLE);
+//     if (err != ESP_OK) {
+//         ESP_LOGI(TAG, "Failed to send vendor message 0x%06" PRIx32, opcode);
+//         return err;
+//     }
+//     else{
+//           ESP_LOGI(TAG, "mssg send to the server vendor");
+//     }
+//     return err;
+// }
+uint8_t mqtt_snd_mssg_to_vnd_srv(uint8_t ndAddr,uint16_t grpAddr){
+esp_ble_mesh_msg_ctx_t ctx = {0};
+esp_err_t err;
+err= esp_ble_mesh_model_subscribe_group_addr(PROV_OWN_ADDR,ESP_BLE_MESH_CID_NVAL,ESP_BLE_MESH_MODEL_ID_LIGHT_CTL_CLI,grpAddr);
+        ESP_LOGE(TAG, "group addr subscribe: %d and curr addr %d",err,grpAddr);
     uint32_t opcode;
-    esp_err_t err;
-    uint8_t mss[]={1,2,3,4,5};
+    
+    uint8_t lw=grpAddr & 0x00FF;
+     uint8_t up=grpAddr >> 8;   
+    uint8_t mss[]={lw,up,3,4,5};
     // ESP_LOGI(TAG, "node addr ");
     ctx.net_idx = prov_key.net_idx;
     ctx.app_idx = prov_key.app_idx;
-    ctx.addr = ndAddr;
+    ctx.addr = (uint16_t) ndAddr;
     ctx.send_ttl = MSG_SEND_TTL;
     ctx.send_rel = MSG_SEND_REL;
     opcode = ESP_BLE_MESH_VND_MODEL_OP_SEND;
     err = esp_ble_mesh_client_model_send_msg(vendor_client.model, &ctx, opcode,
-            5, mss, MSG_TIMEOUT, false, MSG_ROLE);
+            5, mss, MSG_TIMEOUT, true, MSG_ROLE);
     if (err != ESP_OK) {
         ESP_LOGI(TAG, "Failed to send vendor message 0x%06" PRIx32, opcode);
         return err;
@@ -214,12 +276,110 @@ void default_push_to_mqtt(){
     return err;
 
 }
+esp_err_t snd_mssg_to_vnd_srv(uint16_t ndAddr){
+    // esp_ble_mesh_provisioner_bind_app_key_to_local_model(PROV_OWN_ADDR, prov_key.app_idx,
+    //                 ESP_BLE_MESH_VND_MODEL_ID_CLIENT, CID_ESP);
+    esp_ble_mesh_msg_ctx_t ctx = {0};
+    uint32_t opcode;
+    esp_err_t err; 
+    uint8_t mss[]={1,2,3,4,5};
+    // ESP_LOGI(TAG, "node addr ");
+    ctx.net_idx = prov_key.net_idx;
+    ctx.app_idx = prov_key.app_idx;
+    ctx.addr = ndAddr;
+    ctx.send_ttl = MSG_SEND_TTL;
+    ctx.send_rel = MSG_SEND_REL;
+    opcode = ESP_BLE_MESH_VND_MODEL_OP_SEND;
+    err = esp_ble_mesh_client_model_send_msg(vendor_client.model, &ctx, opcode,
+            5, mss, MSG_TIMEOUT, true, MSG_ROLE);
+    if (err != ESP_OK) {
+        ESP_LOGI(TAG, "Failed to send vendor message 0x%06" PRIx32, opcode);
+        return err;
+    }
+    else{
+          ESP_LOGI(TAG, "mssg send to the server vendor");
+    }
+    return err;
 
-void get_node_on_bus_enable_call(uint8_t state){
+}
+//  esp_err_t snd_dev_to_prov_node(uint16_t ndAddr){
+//    esp_ble_mesh_msg_ctx_t ctx = {0};
+//     esp_err_t err;
+//     uint32_t opcode=ESP_BLE_MESH_VND_MODEL_OP_SEND;
+//     // err=vendor_set_msg_common_tt(&commonContext,ndAddr);
+//        ctx.net_idx = prov_key.net_idx;
+//     ctx.app_idx = prov_key.app_idx;
+//     ctx.addr = ndAddr;
+//     ctx.send_ttl = MSG_SEND_TTL;
+//     ctx.send_rel = MSG_SEND_REL;
+//     opcode = ESP_BLE_MESH_VND_MODEL_OP_SEND;
+//     uint8_t messg_len=16;
+//     // uint8_t messg[messg_len];
+    // struct bt_mesh_node* node=bt_mesh_provisioner_get_node_with_addr(ndAddr);
+//     uint8_t* devKey=node->dev_key;
+//     // for(uint8_t i=0;i<16;i++){
+//     //     messg[i]=devKey[i];
+//     // }
+//     ESP_LOGI(TAG,"sended Dev key-----");
+//                   for(int i=0;i<16;i++){
+//                 ESP_LOGI(TAG,"%d",devKey[i]);
+//             }
+//     retransTime++;
+//     err = esp_ble_mesh_client_model_send_msg(vendor_client.model, &ctx, ESP_BLE_MESH_VND_MODEL_OP_SEND,
+//             messg_len, devKey, MSG_TIMEOUT, false, MSG_ROLE);
+//             // err = esp_ble_mesh_client_model_send_msg(vendor_client.model, &ctx, opcode,
+//             // 21, mssg_data, MSG_TIMEOUT, true, MSG_ROLE);
+//     if (err != ESP_OK) {
+//         ESP_LOGI(TAG, "Failed to send vendor message 0x%06" PRIx32, opcode);
+//         return err;
+//     }
+//     else{
+//           ESP_LOGI(TAG, "mssg send to the server vendor");
+//     }
+//     return err;
+// }
+ esp_err_t snd_mssg_to_clt(uint16_t clt_addr){
+    esp_ble_mesh_msg_ctx_t ctx = {0};
+    uint32_t opcode;
+    esp_err_t err;
+    uint8_t mssg_data[]={0x00};
+    // ESP_LOGE(TAG, "clt addr 0x%04x, srv addr 0x%04x" ,clt_addr, srv_addr);
+    ctx.net_idx = 0;
+    ctx.app_idx = 0;
+    ctx.addr = 12;
+    ctx.send_ttl = MSG_SEND_TTL;
+    ctx.send_rel = 1;
+    opcode = ESP_BLE_MESH_VND_MODEL_OP_SEND;
+
+    // mssg_data[0]=0;
+    // for(uint8_t i=1;i<6;i++){
+    //     mssg_data[i]=i+10;
+    // }
+    err = esp_ble_mesh_client_model_send_msg(vendor_client.model, &ctx, ESP_BLE_MESH_VND_MODEL_OP_SEND,
+            1, mssg_data, MSG_TIMEOUT, true, MSG_ROLE);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to send vendor message 0x%06" PRIx32, opcode);
+        return err;
+    }
+    else{
+          ESP_LOGE(TAG, "mssg send to the server vendor");
+    }
+    return err;
+
+}
+
+void control_gear_search_ble_enable(uint8_t state){
+	unprov_pkg_to_mqtt = state;
+     esp_timer_start_once(pkgTimer,10000000);
+return ;
+}
+
+void get_node_on_bus_enable_call(uint8_t state,uint8_t sizeProvNode){
 	printf("get_node_comp_data_enable - %d\n",state);
 	get_node_on_bus_enable = state;
-	get_node_on_bus_current_count = 10;
-
+    prov_node_total_count=11+sizeProvNode;
+    get_node_on_bus_current_count=11;
+    return;
 }
 
 _Bool get_node_on_bus(uint8_t device_id)
@@ -228,7 +388,6 @@ _Bool get_node_on_bus(uint8_t device_id)
 	snd_mssg_to_vnd_srv(device_id);	
 	return true;
 }
-
 _Bool get_all_node_on_bus()
 {
 	if(get_node_on_bus_enable <= 0)
@@ -236,33 +395,20 @@ _Bool get_all_node_on_bus()
 		return false;
 	}
 	printf("get_all_device_on_bus device id - %d\n",get_node_on_bus_current_count);
-		if(get_node_on_bus_current_count >12){
+		if(get_node_on_bus_current_count > prov_node_total_count){
 		// update_device_detal(0,0); // end of sync device on rs485 bus
          default_push_to_mqtt();
+         ESP_LOGI(TAG,"no deault push");
 		get_node_on_bus_enable = 0;
 		get_node_on_bus_current_count = 10;
 		return true;
 	}
 	get_node_on_bus(get_node_on_bus_current_count);
 	get_node_on_bus_current_count++;
-	return true;
-	
-}
-void Timer_task(){
-     while(1)
-  {vTaskDelay(10);
-    ESP_LOGI(TAG,"timer_clock_task Running ,provisioner would be on for 2mins");
-    vTaskDelay(4*6000);
-    esp_err_t err= esp_ble_mesh_provisioner_prov_disable(ESP_BLE_MESH_PROV_ADV );
-    if(err==ESP_OK){
-    ESP_LOGI(TAG, "provisioner provisioning successfully disabled ");
-    }
-     ESP_LOGI(TAG," About to delete itself");
-  default_push_to_mqtt();
-    vTaskDelete(NULL);    // Deleting the task 
-  }
-}
-
+    // get_node_on_bus_enable = 0;
+	// 	get_node_on_bus_current_count = 10;
+	return true;	
+}  
 uint8_t already_pushed_pkg_to_mqtt(uint8_t* n_dev_id){
     if(!count_of_present_dev_id){
         already_push_to_mqtt[0]=(uint8_t*)malloc(16 * sizeof(uint8_t));
@@ -280,12 +426,11 @@ uint8_t already_pushed_pkg_to_mqtt(uint8_t* n_dev_id){
                     break;
                 }
             }
-            // ESP_LOGI(TAG,"value of j = %d",j);
             if(j==16){
         return 1; 
             }
             }
-            if(i==count_of_present_dev_id){
+            if(count_of_present_dev_id <= acceptPkgCunt){
 already_push_to_mqtt[count_of_present_dev_id]=(uint8_t*)malloc(16 * sizeof(uint8_t));
         for(uint8_t k=0;k<16;k++){
             already_push_to_mqtt[count_of_present_dev_id][k]=n_dev_id[k];
@@ -294,7 +439,6 @@ already_push_to_mqtt[count_of_present_dev_id]=(uint8_t*)malloc(16 * sizeof(uint8
         return 0;
             }
     return 1;
-
 }
 void clear_all_recv_pkg_arr(){
     for(int i=0;i<count_of_present_dev_id;i++){
@@ -303,49 +447,11 @@ void clear_all_recv_pkg_arr(){
     count_of_present_dev_id=0;
     return;
 }
-  void start_provisioner_provisioning(){
-     
-    esp_err_t err= esp_ble_mesh_provisioner_prov_enable(ESP_BLE_MESH_PROV_ADV | ESP_BLE_MESH_PROV_GATT);
-    if(err==ESP_OK){
-ESP_LOGI(TAG, "provisioner provisioning mode activated");
-    }
-    else{
-      ESP_LOGI(TAG, "provisioner provisioning mode not able to activate");  
-    }
-     xTaskCreate(&Timer_task, "Task1", 4096, NULL, 3, NULL);
-    return;
-  }
-
-  esp_err_t snd_mssg_to_clt(uint16_t clt_addr,uint16_t srv_addr){
-    esp_ble_mesh_msg_ctx_t ctx = {0};
-    uint32_t opcode;
-    esp_err_t err;
-    uint8_t mssg_data[6];
-    ESP_LOGE(TAG, "clt addr 0x%04x, srv addr 0x%04x" ,clt_addr, srv_addr);
-    ctx.net_idx = prov_key.net_idx;
-    ctx.app_idx = prov_key.app_idx;
-    ctx.addr = clt_addr;
-    ctx.send_ttl = MSG_SEND_TTL;
-    ctx.send_rel = MSG_SEND_REL;
-    opcode = ESP_BLE_MESH_VND_MODEL_OP_SEND;
-
-    mssg_data[0]=srv_addr;
-    for(uint8_t i=1;i<20;i++){
-        mssg_data[i]=i+10;
-    }
-    err = esp_ble_mesh_client_model_send_msg(vendor_client.model, &ctx, opcode,
-            21, mssg_data, MSG_TIMEOUT, false, MSG_ROLE);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to send vendor message 0x%06" PRIx32, opcode);
-        return err;
-    }
-    else{
-          ESP_LOGE(TAG, "mssg send to the server vendor");
-    }
-    return err;
-
+void endPkgRec(){
+    esp_timer_stop(pkgTimer);
+    clear_all_recv_pkg_arr();
+unprov_pkg_to_mqtt=0;
 }
-
 
 static esp_err_t example_ble_mesh_store_node_info(const uint8_t uuid[16], uint16_t unicast,
                                                   uint8_t elem_num, uint8_t onoff_state)
@@ -420,27 +526,7 @@ static esp_err_t example_ble_mesh_set_msg_common(esp_ble_mesh_client_common_para
     return ESP_OK;
 }
 
-static esp_err_t example_ble_mesh_set_msg_common_tt(esp_ble_mesh_client_common_param_t *common,
-                                                 uint16_t unicast,
-                                                 esp_ble_mesh_model_t *model, uint32_t opcode)
-{
-    if (!common || !model) {
-        return ESP_ERR_INVALID_ARG;
-    }
- 
 
-    common->opcode = opcode;
-    common->model = model;
-    common->ctx.net_idx = prov_key.net_idx;
-    common->ctx.app_idx = prov_key.app_idx;
-    common->ctx.addr = unicast;
-    common->ctx.send_ttl = MSG_SEND_TTL;
-    common->ctx.send_rel = MSG_SEND_REL;
-    common->msg_timeout = MSG_TIMEOUT;
-    common->msg_role = MSG_ROLE;
-
-    return ESP_OK;
-}
 uint8_t local_tid=0;
 
 void example_ble_mesh_send_gen_onoff_set(uint16_t device_id,uint8_t onoff)
@@ -488,39 +574,26 @@ void gen_onoff_push_mqtt(uint16_t src,uint16_t dest,uint8_t onoff,uint8_t evnt){
 
     char* cjson_gen_info=cJSON_Print(gen_info);
     postBleDeviceInfo(cjson_gen_info);
+    cJSON_Delete(gen_info);
     
 }
-// static void example_handle_gen_onoff_msg(esp_ble_mesh_model_t *model,
-//                                          esp_ble_mesh_msg_ctx_t *ctx,
-//                                          esp_ble_mesh_server_recv_gen_onoff_set_t *set)
-// {
-//     esp_ble_mesh_gen_onoff_srv_t *srv = model->user_data;
+void pushProvNodeToMqtt(uint16_t unicast){
+   struct bt_mesh_node* nodeInfo= bt_mesh_provisioner_get_node_with_addr(unicast);
 
-//     switch (ctx->recv_op) {
-//     case ESP_BLE_MESH_MODEL_OP_GEN_ONOFF_GET:
-//         esp_ble_mesh_server_model_send_msg(model, ctx,
-//             ESP_BLE_MESH_MODEL_OP_GEN_ONOFF_STATUS, sizeof(srv->state.onoff), &srv->state.onoff);
-//         break;
-//     case ESP_BLE_MESH_MODEL_OP_GEN_ONOFF_SET:
-//     case ESP_BLE_MESH_MODEL_OP_GEN_ONOFF_SET_UNACK:
-//         if (set->op_en == false) {
-//             srv->state.onoff = set->onoff;
-//         } else {
-//             /* TODO: Delay and state transition */
-//             srv->state.onoff = set->onoff;
-//         }
-//         if (ctx->recv_op == ESP_BLE_MESH_MODEL_OP_GEN_ONOFF_SET) {
-//             esp_ble_mesh_server_model_send_msg(model, ctx,
-//                 ESP_BLE_MESH_MODEL_OP_GEN_ONOFF_STATUS, sizeof(srv->state.onoff), &srv->state.onoff);
-//         }
-//         esp_ble_mesh_model_publish(model, ESP_BLE_MESH_MODEL_OP_GEN_ONOFF_STATUS,
-//             sizeof(srv->state.onoff), &srv->state.onoff, ROLE_NODE);
-//         example_change_led_state(model, ctx, srv->state.onoff);
-//         break;
-//     default:
-//         break;
-//     }
-// }
+    cJSON * node_info=cJSON_CreateObject();
+     cJSON_AddItemToObject(node_info,"devKey" , cJSON_CreateString(bt_hex(nodeInfo->dev_key, 16)));
+    cJSON_AddItemToObject(node_info,"deviceUuid" , cJSON_CreateString(bt_hex(nodeInfo->dev_uuid, 16)));
+    cJSON_AddItemToObject(node_info, "address", cJSON_CreateString(bt_hex(nodeInfo->addr, BD_ADDR_LEN)));
+    cJSON_AddItemToObject(node_info,"addrType" , cJSON_CreateNumber(nodeInfo->addr_type));
+     cJSON_AddItemToObject(node_info,"unicastAddr" , cJSON_CreateNumber(unicast));
+    cJSON_AddItemToObject(node_info,"netIdx" , cJSON_CreateNumber(nodeInfo->net_idx));
+     cJSON_AddItemToObject(node_info,"infoType" , cJSON_CreateNumber(2));
+    char* cjson_node_info=cJSON_Print(node_info);
+    ESP_LOGI(TAG,"node Info :- %s",cjson_node_info);
+    postBleDeviceInfo(cjson_node_info);
+    cJSON_Delete(node_info);
+    
+}
 
 
 static esp_err_t prov_complete(int node_idx, const esp_ble_mesh_octet16_t uuid,
@@ -562,7 +635,8 @@ static esp_err_t prov_complete(int node_idx, const esp_ble_mesh_octet16_t uuid,
         ESP_LOGE(TAG, "%s: Send config comp data get failed", __func__);
         return ESP_FAIL;
     }
-
+    
+    pushProvNodeToMqtt(unicast);
     return ESP_OK;
 }
 
@@ -590,13 +664,12 @@ static void recv_unprov_adv_pkt(uint8_t dev_uuid[16], uint8_t addr[BD_ADDR_LEN],
     ESP_LOGI(TAG, "address: %s, address type: %d, adv type: %d", bt_hex(addr, BD_ADDR_LEN), addr_type, adv_type);
     ESP_LOGI(TAG, "device uuid: %s", bt_hex(dev_uuid, 16));
     ESP_LOGI(TAG, "oob info: %d, bearer: %s", oob_info, (bearer & ESP_BLE_MESH_PROV_ADV) ? "PB-ADV" : "PB-GATT");
-    if(!already_pushed_pkg_to_mqtt(dev_uuid) ){
+    // add unprov_pkg_to_mqtt in below to set control to the user
+    if( !already_pushed_pkg_to_mqtt(dev_uuid)){
     cJSON * node_info=cJSON_CreateObject();
     cJSON_AddItemToObject(node_info,"deviceUuid" , cJSON_CreateString(bt_hex(dev_uuid, 16)));
     cJSON_AddItemToObject(node_info, "address", cJSON_CreateString(bt_hex(addr, BD_ADDR_LEN)));
     cJSON_AddItemToObject(node_info,"addrType" , cJSON_CreateNumber(addr_type));
-    // cJSON_AddItemToObject(node_info,"advType" , cJSON_CreateNumber(adv_type));
-    // cJSON_AddItemToObject(node_info,"oobInfo" , cJSON_CreateNumber(oob_info));
     cJSON_AddItemToObject(node_info,"bearer" , cJSON_CreateNumber(bearer));
      cJSON_AddItemToObject(node_info,"infoType" , cJSON_CreateNumber(2));
     char* cjson_node_info=cJSON_Print(node_info);
@@ -654,24 +727,7 @@ static void example_ble_mesh_provisioning_cb(esp_ble_mesh_prov_cb_event_t event,
     case ESP_BLE_MESH_PROVISIONER_ADD_LOCAL_APP_KEY_COMP_EVT: {
         ESP_LOGI(TAG, "ESP_BLE_MESH_PROVISIONER_ADD_LOCAL_APP_KEY_COMP_EVT, err_code %d", param->provisioner_add_app_key_comp.err_code);
         if (param->provisioner_add_app_key_comp.err_code == ESP_OK) {
-            esp_err_t err = 0;
             prov_key.app_idx = param->provisioner_add_app_key_comp.app_idx;
-        //     err = esp_ble_mesh_provisioner_bind_app_key_to_local_model(PROV_OWN_ADDR, prov_key.app_idx,
-        //             ESP_BLE_MESH_MODEL_ID_LIGHT_CTL_CLI, ESP_BLE_MESH_CID_NVAL);
-        //     if (err != ESP_OK) {
-        //         ESP_LOGE(TAG, "Provisioner bind local model appkey failed");
-                
-        //     }
-            
-        //   err = esp_ble_mesh_provisioner_bind_app_key_to_local_model(PROV_OWN_ADDR, prov_key.app_idx,
-        //             ESP_BLE_MESH_VND_MODEL_ID_CLIENT, CID_ESP);
-        //     if (err != ESP_OK) {
-        //         ESP_LOGE(TAG, "Failed to bind AppKey to vendor client ");
-        //     }
-        //     else{
-        //         ESP_LOGE(TAG, "success to bind AppKey to vendor client addr: 0x%04x",prov_key.app_idx);
-
-        //     }
         }
         break;
     }
@@ -727,11 +783,12 @@ static void example_ble_mesh_config_client_cb(esp_ble_mesh_cfg_client_cb_event_t
                 ESP_LOGE(TAG, "%s: Config AppKey Add failed", __func__);
                 return;
             }
-            cJSON * gen_info=cJSON_CreateObject();
-        cJSON_AddItemToObject(gen_info,"success" , cJSON_CreateNumber(0));
-        cJSON_AddItemToObject(gen_info, "deviceType", cJSON_CreateNumber(1));
-        char* cjson_node_info=cJSON_Print(gen_info);
-        postBleDeviceInfo(cjson_node_info);
+        //     cJSON * gen_info=cJSON_CreateObject();
+        // cJSON_AddItemToObject(gen_info,"success" , cJSON_CreateNumber(0));
+        // cJSON_AddItemToObject(gen_info, "deviceType", cJSON_CreateNumber(1));
+        // char* cjson_node_info=cJSON_Print(gen_info);
+        // postBleDeviceInfo(cjson_node_info);
+        // cJSON_Delete(gen_info);
             break;
         }
         default:
@@ -833,19 +890,7 @@ static void example_ble_mesh_config_client_cb(esp_ble_mesh_cfg_client_cb_event_t
                 ESP_LOGE(TAG, "%s: Config Model App Bind failed", __func__);
                 return;
             }
-            /*
-            set_state.model_app_bind.model_id = ESP_BLE_MESH_VND_MODEL_ID_SERVER;
-                        set_state.model_app_bind.company_id = CID_ESP;
-            set_state.model_app_bind.model_id = ESP_BLE_MESH_MODEL_ID_GEN_ONOFF_CLI;
-            set_state.model_app_bind.company_id = 0x05f1;
-            err = esp_ble_mesh_config_client_set_state(&common, &set_state);
-            if (err != ESP_OK) {
-                ESP_LOGE(TAG, "Failed to send Config Model App Bind");
-            }
-            else{
-                 ESP_LOGE(TAG, "Failed to send Config Model App Bind");
-            }
-            */
+         
             break;
         }
         default:
@@ -857,279 +902,79 @@ static void example_ble_mesh_config_client_cb(esp_ble_mesh_cfg_client_cb_event_t
         break;
     }
 }
-
-// static void example_ble_mesh_generic_client_cb(esp_ble_mesh_generic_client_cb_event_t event,
-//                                                esp_ble_mesh_generic_client_cb_param_t *param)
-// {
-//     esp_ble_mesh_client_common_param_t common = {0};
-//     esp_ble_mesh_node_info_t *node = NULL;
-//     uint32_t opcode;
-//     uint16_t addr;
-//     int err;
-
-//     opcode = param->params->opcode;
-//     addr = param->params->ctx.addr;
-
-//     ESP_LOGI(TAG, "%s, error_code = 0x%02x, event = 0x%02x, addr: 0x%04x, opcode: 0x%04x",
-//              __func__, param->error_code, event, param->params->ctx.addr, opcode);
-
-//     if (param->error_code) {
-//         ESP_LOGE(TAG, "Send generic client message failed, opcode 0x%04x", opcode);
-//         return;
-//     }
-
-//     node = example_ble_mesh_get_node_info(addr);
-//     if (!node) {
-//         ESP_LOGE(TAG, "%s: Get node info failed", __func__);
-//         return;
-//     }
-
-//     switch (event) {
-//     case ESP_BLE_MESH_GENERIC_CLIENT_GET_STATE_EVT:
-//         switch (opcode) {
-//         case ESP_BLE_MESH_MODEL_OP_GEN_ONOFF_GET: {
-//             esp_ble_mesh_generic_client_set_state_t set_state = {0};
-//             node->onoff = param->status_cb.onoff_status.present_onoff;
-//             ESP_LOGI(TAG, "ESP_BLE_MESH_MODEL_OP_GEN_ONOFF_GET onoff: 0x%02x", node->onoff);
-//             /* After Generic OnOff Status for Generic OnOff Get is received, Generic OnOff Set will be sent */
-//             // example_ble_mesh_set_msg_common(&common, node, level_client.model, ESP_BLE_MESH_MODEL_OP_GEN_LEVEL_SET);
-//             // set_state.onoff_set.op_en = false;
-//             // set_state.onoff_set.onoff = !node->onoff;
-//             // set_state.onoff_set.tid = 0;
-//             // err = esp_ble_mesh_generic_client_set_state(&common, &set_state);
-//             // if (err) {
-//             //     ESP_LOGE(TAG, "%s: Generic OnOff Set failed", __func__);
-//             //     return;
-//             // }
-//             break;
-//         }
-//         default:
-//             break;
-//         }
-//         break;
-//     case ESP_BLE_MESH_GENERIC_CLIENT_SET_STATE_EVT:
-//         switch (opcode) {
-//         case ESP_BLE_MESH_MODEL_OP_GEN_ONOFF_SET:
-//             node->onoff = param->status_cb.onoff_status.present_onoff;
-//             ESP_LOGI(TAG, "ESP_BLE_MESH_MODEL_OP_GEN_ONOFF_SET onoff: 0x%02x", node->onoff);
-//             break;
-//         default:
-//             break;
-//         }
-//         break;
-//     case ESP_BLE_MESH_GENERIC_CLIENT_PUBLISH_EVT:
-//         break;
-//     case ESP_BLE_MESH_GENERIC_CLIENT_TIMEOUT_EVT:
-//         /* If failed to receive the responses, these messages will be resend */
-//         switch (opcode) {
-//         case ESP_BLE_MESH_MODEL_OP_GEN_ONOFF_GET: {
-//             esp_ble_mesh_generic_client_get_state_t get_state = {0};
-//             example_ble_mesh_set_msg_common(&common, node, level_client.model, ESP_BLE_MESH_MODEL_OP_GEN_ONOFF_GET);
-//             err = esp_ble_mesh_generic_client_get_state(&common, &get_state);
-//             if (err) {
-//                 ESP_LOGE(TAG, "%s: Generic OnOff Get failed", __func__);
-//                 return;
-//             }
-//             break;
-//         }
-//         case ESP_BLE_MESH_MODEL_OP_GEN_ONOFF_SET: {
-//             esp_ble_mesh_generic_client_set_state_t set_state = {0};
-//             node->onoff = param->status_cb.onoff_status.present_onoff;
-//             ESP_LOGI(TAG, "ESP_BLE_MESH_MODEL_OP_GEN_ONOFF_GET onoff: 0x%02x", node->onoff);
-//             // example_ble_mesh_set_msg_common(&common, node, level_client.model, ESP_BLE_MESH_MODEL_OP_GEN_ONOFF_SET);
-//             // set_state.onoff_set.op_en = false;
-//             // set_state.onoff_set.onoff = !node->onoff;
-//             // set_state.onoff_set.tid = 0;
-//             // err = esp_ble_mesh_generic_client_set_state(&common, &set_state);
-//             // if (err) {
-//             //     ESP_LOGE(TAG, "%s: Generic OnOff Set failed", __func__);
-//             //     return;
-//             // }
-//             break;
-//         }
-//         default:
-//             break;
-//         }
-//         break;
-//     default:
-//         ESP_LOGE(TAG, "Not a generic client status message event");
-//         break;
-//     }
-// }
-// int a = 0;
-static void example_ble_mesh_generic_client_cb(esp_ble_mesh_generic_client_cb_event_t event,
-                                               esp_ble_mesh_generic_client_cb_param_t *param)
-{
-    ESP_LOGI(TAG, "Generic client, event %u, error code %d, opcode is 0x%04x",
-        event, param->error_code, param->params->opcode);
-
-    switch (event) {
-    case ESP_BLE_MESH_GENERIC_CLIENT_GET_STATE_EVT:
-        ESP_LOGI(TAG, "ESP_BLE_MESH_GENERIC_CLIENT_GET_STATE_EVT");
-        if (param->params->opcode == ESP_BLE_MESH_MODEL_OP_GEN_ONOFF_GET) {
-            ESP_LOGI(TAG, "ESP_BLE_MESH_MODEL_OP_GEN_ONOFF_GET, onoff %d", param->status_cb.onoff_status.present_onoff);
-        }
-        break;
-    case ESP_BLE_MESH_GENERIC_CLIENT_SET_STATE_EVT:
-        ESP_LOGI(TAG, "ESP_BLE_MESH_GENERIC_CLIENT_SET_STATE_EVT");
-        if (param->params->opcode == ESP_BLE_MESH_MODEL_OP_GEN_ONOFF_SET) {
-            ESP_LOGI(TAG, "ESP_BLE_MESH_MODEL_OP_GEN_ONOFF_SET, onoff %d", param->status_cb.onoff_status.present_onoff);
-             ESP_LOGI(TAG,"receive acknowledge Node addr 0x%04x",param->params->ctx.addr);
-        }
-        break;
-    case ESP_BLE_MESH_GENERIC_CLIENT_PUBLISH_EVT:
-        ESP_LOGI(TAG, "ESP_BLE_MESH_GENERIC_CLIENT_PUBLISH_EVT");
-        ESP_LOGI(TAG,"receive acknowledge after timeout Node addr 0x%04x",param->params->ctx.addr);
-        break;
-    case ESP_BLE_MESH_GENERIC_CLIENT_TIMEOUT_EVT:
-        ESP_LOGI(TAG, "ESP_BLE_MESH_GENERIC_CLIENT_TIMEOUT_EVT");
-        if (param->params->opcode == ESP_BLE_MESH_MODEL_OP_GEN_ONOFF_SET) {
-            /* If failed to get the response of Generic OnOff Set, resend Generic OnOff Set  */
-            // example_ble_mesh_send_gen_onoff_set();
-        }
-        break;
-    default:
-        break;
-    }
-}
-uint8_t prev_id;
+uint16_t prev_id;
 void* prevSetState;
-uint8_t retransTime;
-int ble_send_command(int device_id,void * set_state1)
+
+int ble_send_command(uint16_t device_id,void * set_state1)
 {
   int err;
-  esp_ble_mesh_node_info_t *node = NULL;
+  ESP_LOGI(TAG, "start addr %d",device_id);
   uint16_t addr = device_id;
-//   node = example_ble_mesh_get_node_info(addr);
-//   if (!node) {
-//     ESP_LOGE(TAG, "%s: Get node info failed", __func__);
-//     return;
-//   }
-//   ESP_LOGI(TAG, "ble_send_command aaaaaaaaaaaaaaaaaaaaGEN_ONOFF_GET onoff: 0x%02x", node->level);
-//   node->level = data;
 prev_id=device_id;
 prevSetState=set_state1;
   esp_ble_mesh_client_common_param_t common = {0};
   esp_ble_mesh_light_client_set_state_t* set_state = (struct esp_ble_mesh_light_client_set_state_t* ) set_state1;
-//   esp_ble_mesh_light_client_set_state_t set_state2;
-//   set_state2.ctl_set=
-  //node->onoff = param->status_cb.onoff_status.present_onoff;
+
   ESP_LOGI(TAG, "ble_send_command onoff:");
     ESP_LOGI(TAG, "temp %d light %d:",set_state->ctl_set.ctl_temperatrue,set_state->ctl_set.ctl_lightness);
   /* After Generic OnOff Status for Generic OnOff Get is received, Generic OnOff Set will be sent */
   example_ble_mesh_set_msg_common_tt(&common, addr, ctl_client.model, ESP_BLE_MESH_MODEL_OP_LIGHT_CTL_SET);
-//   set_state.ctl_set.op_en = true;
-//   set_state.ctl_set.tid=tid++;
-//   set_state.ctl_set.ctl_lightness= data;
-//   set_state.ctl_set.ctl_temperatrue= 950;
-// //   set_state.ctl_set.tid = 0;
-//   set_state.ctl_set.trans_time=0;
-//   set_state.ctl_set.delay=0;
-// mytimeXy=esp_timer_get_time();
 retransTime++;
+ESP_LOGI(TAG, "send addr %d",common.ctx.addr);
   err = esp_ble_mesh_light_client_set_state(&common,set_state);
   if (err) {
-    ESP_LOGE(TAG, "%s: Generic OnOff Set failed", __func__);
+    ESP_LOGE(TAG, "%s: Generic OnOff Set failed (err %d)", __func__,err);
     // return err;
   }
   return err;
 }
-int ble_send_command_color(int device_id,int data)
-{
-  int err;
-  esp_ble_mesh_node_info_t *node = NULL;
-//   uint16_t addr = device_id;
-//   node = example_ble_mesh_get_node_info(addr);
-//   if (!node) {
-//     ESP_LOGE(TAG, "%s: Get node info failed", __func__);
-//     return;
+// int ble_send_command_color(int device_id,int data)
+// {
+//   int err;
+//   esp_ble_mesh_client_common_param_t common = {0};
+//   esp_ble_mesh_light_client_set_state_t set_state = {0};
+//   //node->onoff = param->status_cb.onoff_status.present_onoff;
+//   ESP_LOGI(TAG, "ble_send_command_color onoff: 0x%02x", data);
+//   /* After Generic OnOff Status for Generic OnOff Get is received, Generic OnOff Set will be sent */
+//   example_ble_mesh_set_msg_common_tt(&common, device_id, ctl_client.model, ESP_BLE_MESH_MODEL_OP_LIGHT_CTL_SET);
+//   //as per nrf mesh mssg
+//   set_state.ctl_set.op_en = true;
+// //   set_state.ctl_set.ctl_lightness= 255;
+// //   set_state.ctl_set.ctl_temperatrue= 0x0320 + data;
+// // //   set_state.ctl_set.tid = 0;
+// //   set_state.ctl_set.tid=tid++;
+// // set_state.ctl_set.trans_time=0;
+// //   set_state.ctl_set.delay=0;
+
+//   err = esp_ble_mesh_light_client_set_state(&common, &set_state);
+//   if (err) {
+//     ESP_LOGE(TAG, "%s: Generic OnOff Set failed", __func__);
+//     // return err;
 //   }
-//   ESP_LOGI(TAG, "ble_send_command aaaaaaaaaaaaaaaaaaaaGEN_ONOFF_GET onoff: 0x%02x", node->level);
-//   node->level = data;
+//   return err;
+// }
 
-
-  esp_ble_mesh_client_common_param_t common = {0};
-  esp_ble_mesh_light_client_set_state_t set_state = {0};
-  //node->onoff = param->status_cb.onoff_status.present_onoff;
-  ESP_LOGI(TAG, "ble_send_command_color onoff: 0x%02x", data);
-  /* After Generic OnOff Status for Generic OnOff Get is received, Generic OnOff Set will be sent */
-  example_ble_mesh_set_msg_common_tt(&common, device_id, ctl_client.model, ESP_BLE_MESH_MODEL_OP_LIGHT_CTL_SET);
-  //as per nrf mesh mssg
-  set_state.ctl_set.op_en = true;
-//   set_state.ctl_set.ctl_lightness= 255;
-//   set_state.ctl_set.ctl_temperatrue= 0x0320 + data;
-// //   set_state.ctl_set.tid = 0;
-//   set_state.ctl_set.tid=tid++;
-// set_state.ctl_set.trans_time=0;
-//   set_state.ctl_set.delay=0;
-
-  err = esp_ble_mesh_light_client_set_state(&common, &set_state);
-  if (err) {
-    ESP_LOGE(TAG, "%s: Generic OnOff Set failed", __func__);
-    // return err;
-  }
-  return err;
-}
-uint8_t data1=1;
-int ble_send_onoff_command(int device_id,int data){
-    ESP_LOGI(TAG,"send onoff client");
-    
-    for(int i=0;i<3;i++){
-        data1=!data1;
-    ble_send_command(device_id,data1);
-    vTaskDelay(50);
-    }
-    return 0;
-}
-/*
-static void example_ble_mesh_generic_server_cb(esp_ble_mesh_generic_server_cb_event_t event,
-                                               esp_ble_mesh_generic_server_cb_param_t *param)
-{
-    esp_ble_mesh_gen_onoff_srv_t *srv;
-    ESP_LOGI(TAG, "event 0x%02x, opcode 0x%04x, src 0x%04x, dst 0x%04x",
-        event, param->ctx.recv_op, param->ctx.addr, param->ctx.recv_dst);
-
-    switch (event) {
-    case ESP_BLE_MESH_GENERIC_SERVER_STATE_CHANGE_EVT:
-        ESP_LOGI(TAG, "ESP_BLE_MESH_GENERIC_SERVER_STATE_CHANGE_EVT");
-        if (param->ctx.recv_op == ESP_BLE_MESH_MODEL_OP_GEN_ONOFF_SET ||
-            param->ctx.recv_op == ESP_BLE_MESH_MODEL_OP_GEN_ONOFF_SET_UNACK) {
-            ESP_LOGI(TAG, "onoff 0x%02x", param->value.state_change.onoff_set.onoff);
-            gen_onoff_push_mqtt(param->ctx.addr,param->ctx.recv_dst,param->value.state_change.onoff_set.onoff,event);
-            // example_change_led_state(param->model, &param->ctx, param->value.state_change.onoff_set.onoff);
-        }
-        break;
-    case ESP_BLE_MESH_GENERIC_SERVER_RECV_GET_MSG_EVT:
-        ESP_LOGI(TAG, "ESP_BLE_MESH_GENERIC_SERVER_RECV_GET_MSG_EVT");
-        if (param->ctx.recv_op == ESP_BLE_MESH_MODEL_OP_GEN_ONOFF_GET) {
-            srv = param->model->user_data;
-            ESP_LOGI(TAG, "onoff 0x%02x", srv->state.onoff);
-            gen_onoff_push_mqtt(param->ctx.addr,param->ctx.recv_dst,param->value.state_change.onoff_set.onoff,event);
-
-            // example_handle_gen_onoff_msg(param->model, &param->ctx, NULL);
-        }
-        break;
-    case ESP_BLE_MESH_GENERIC_SERVER_RECV_SET_MSG_EVT:
-        ESP_LOGI(TAG, "ESP_BLE_MESH_GENERIC_SERVER_RECV_SET_MSG_EVT");
-        if (param->ctx.recv_op == ESP_BLE_MESH_MODEL_OP_GEN_ONOFF_SET ||
-            param->ctx.recv_op == ESP_BLE_MESH_MODEL_OP_GEN_ONOFF_SET_UNACK) {
-            ESP_LOGI(TAG, "onoff 0x%02x, tid 0x%02x", param->value.set.onoff.onoff, param->value.set.onoff.tid);
-            if (param->value.set.onoff.op_en) {
-                ESP_LOGI(TAG, "trans_time 0x%02x, delay 0x%02x",
-                    param->value.set.onoff.trans_time, param->value.set.onoff.delay);
+uint8_t deleteBleDevice(uint16_t unicast){
+ esp_err_t err=esp_ble_mesh_provisioner_delete_node_with_addr(unicast);
+              if (err == ESP_OK) {
+                ESP_LOGI(TAG, "success deleted");
+                
             }
-            gen_onoff_push_mqtt(param->ctx.addr,param->ctx.recv_dst,param->value.state_change.onoff_set.onoff,event);
-
-            // example_handle_gen_onoff_msg(param->model, &param->ctx, &param->value.set.onoff);
-        }
-        break;
-    default:
-        ESP_LOGE(TAG, "Unknown Generic Server event 0x%02x", event);
-        break;
-    }
+            else{
+                 ESP_LOGE(TAG, "not deleted");
+            }
+            return err;
+}
+uint8_t addProvisionedNode(const uint8_t *addr,const uint8_t* uuid,uint16_t unicast_addr,uint16_t net_idx,const uint8_t* dev_key ,uint8_t addrType){
+     bt_mesh_addr_t ProvAddrVal;
+     uint16_t ind=0;
+            memcpy(ProvAddrVal.val, addr, 6);
+            ProvAddrVal.type=addrType;
+ esp_err_t err= bt_mesh_provisioner_provision(&ProvAddrVal,uuid,0,unicast_addr,1,net_idx,0,0,dev_key,&ind);
+ return err;
 }
 
-*/
+
 static void example_ble_mesh_lightness_client_model_cb(esp_ble_mesh_light_client_cb_event_t event,
                                              esp_ble_mesh_light_client_cb_param_t *param)
 {
@@ -1158,20 +1003,17 @@ ESP_LOGI(TAG, "event %d opcode %d",event, param->params->opcode);
     case ESP_BLE_MESH_LIGHT_CLIENT_PUBLISH_EVT:
         ESP_LOGI(TAG, "Receive after timeout publish message ");
          ESP_LOGI(TAG, "src 0x%04x",param->params->ctx.addr);
-        // ESP_LOGI(TAG, "src 0x%04x, dst 0x%04x",
-        //      param->params->ctx.recv_op, param->params->ctx.addr, param->params->ctx.recv_dst);
+        
     case ESP_BLE_MESH_LIGHT_CLIENT_TIMEOUT_EVT:
         ESP_LOGI(TAG, "ESP_BLE_MESH_LIGHT_CLIENT_TIMEOUT_EVT");
+       
+        ESP_LOGI(TAG, "error_code   %d",param->error_code);
+        
         if(retransTime==1)
         ble_send_command(prev_id,prevSetState);
         else{
             retransTime=0;
         }
-        //  ack.desAddr=param->params->ctx.addr;
-        //     // ack.tid=2;
-        //     ack.err=5;
-            // pushAckToQueue(ack);
-        
     default:
         break;
     }
@@ -1180,39 +1022,53 @@ ESP_LOGI(TAG, "event %d opcode %d",event, param->params->opcode);
 static void example_ble_mesh_custom_model_cb(esp_ble_mesh_model_cb_event_t event,
                                              esp_ble_mesh_model_cb_param_t *param)
 {
-    static int64_t start_time;
-
+    // static int64_t start_time;
+ nodeAck ack;
     switch (event) {
     case ESP_BLE_MESH_MODEL_OPERATION_EVT:
-      ESP_LOGE(TAG, "ESP_BLE_MESH_MODEL_OPERATION_EVT" PRIx32, param->model_send_comp.opcode);
+      ESP_LOGI(TAG, "ESP_BLE_MESH_MODEL_OPERATION_EVT 0x%06" PRIx32, param->model_send_comp.opcode);
+        ESP_LOGI(TAG, " opcode 0x%04x, src 0x%04x, dst 0x%04x",
+             param->model_operation.ctx->recv_op, param->model_operation.ctx->addr, param->model_operation.ctx->recv_dst);
+            
+             ack.desAddr= param->model_operation.ctx->addr;
+            // ack.tid=2;
+            ack.err=0;
+            pushAckToQueue(ack);
+             retransTime=0;
         break;
     case ESP_BLE_MESH_MODEL_SEND_COMP_EVT:
         if (param->model_send_comp.err_code) {
             ESP_LOGE(TAG, "Failed to send message 0x%06" PRIx32, param->model_send_comp.opcode);
-            break;
         }
         // start_time = esp_timer_get_time();
-         ESP_LOGI(TAG, "Receive publish message 0x%06" PRIx32, param->client_recv_publish_msg.opcode);
-        ESP_LOGI(TAG, " opcode 0x%04x, src 0x%04x, dst 0x%04x",
-             param->model_operation.ctx->recv_op, param->model_operation.ctx->addr, param->model_operation.ctx->recv_dst);
-
+        
         break;
     case ESP_BLE_MESH_CLIENT_MODEL_RECV_PUBLISH_MSG_EVT:
         ESP_LOGI(TAG, "Receive publish message 0x%06" PRIx32, param->client_recv_publish_msg.opcode);
         ESP_LOGI(TAG, " opcode 0x%04x, src 0x%04x, dst 0x%04x",
              param->model_operation.ctx->recv_op, param->model_operation.ctx->addr, param->model_operation.ctx->recv_dst);
-
+             uint8_t* recv_mssg=param->model_operation.msg;
+             if(recv_mssg[0]==0 && recv_mssg[1]==1 && recv_mssg[2]==2){
+                      ESP_LOGI(TAG, "bt_mesh_clear_rpl");
+           bt_mesh_rx_reset_single(param->model_operation.ctx->addr);
+             }
             cJSON * status_info=cJSON_CreateObject();
     cJSON_AddItemToObject(status_info,"vId" , cJSON_CreateNumber(param->model_operation.msg[0]));
     cJSON_AddItemToObject(status_info,"pId" , cJSON_CreateNumber(param->model_operation.msg[1]));
     cJSON_AddItemToObject(status_info,"unicastAddr" , cJSON_CreateNumber(param->model_operation.ctx->addr));
-    cJSON_AddItemToObject(status_info,"infoType" , cJSON_CreateNumber(3));
+    cJSON_AddItemToObject(status_info,"infoType" , cJSON_CreateNumber(param->model_operation.msg[2]));
     char* cjson_status_info=cJSON_Print(status_info);
     postBleDeviceInfo(cjson_status_info);
+    cJSON_Delete(status_info);
         break;
     case ESP_BLE_MESH_CLIENT_MODEL_SEND_TIMEOUT_EVT:
         ESP_LOGW(TAG, "Client message 0x%06" PRIx32 " timeout", param->client_send_timeout.opcode);
-        snd_mssg_to_vnd_srv();
+       
+        if(retransTime==1)
+         snd_mssg_to_vnd_srv(prev_vnd_id);
+        else{
+            retransTime=0;
+        }
         break;
     default:
         break;
@@ -1228,7 +1084,7 @@ case ESP_BLE_MESH_MODEL_ID_GEN_ONOFF_CLI:
 case ESP_BLE_MESH_MODEL_ID_SENSOR_CLI:
     break;
 case ESP_BLE_MESH_MODEL_ID_LIGHT_CTL_CLI:
-    ESP_LOGI(TAG, "light message send");
+    ESP_LOGI(TAG, "light message send device Id %d",deviceId);
     err=ble_send_command(deviceId,set_state);
     break;
 default:
@@ -1238,17 +1094,18 @@ return err;
 }
 static esp_err_t ble_mesh_init_t(void)
 {
-    uint8_t match[2] = {0xdd, 0xdd};
+    // uint8_t match[2] = {0xdd, 0xdd};
     esp_err_t err = ESP_OK;
-    uint8_t net_key_arr[16];
+    // uint8_t net_key_arr[16];
     prov_key.net_idx = ESP_BLE_MESH_KEY_PRIMARY;
     prov_key.app_idx = APP_KEY_IDX;
     memset(prov_key.app_key, APP_KEY_OCTET, sizeof(prov_key.app_key));
 
+
+
+//// custom model only to be used in future
     esp_ble_mesh_register_prov_callback(example_ble_mesh_provisioning_cb);
     esp_ble_mesh_register_config_client_callback(example_ble_mesh_config_client_cb);
-    esp_ble_mesh_register_generic_client_callback(example_ble_mesh_generic_client_cb);
-    // esp_ble_mesh_register_generic_server_callback(example_ble_mesh_generic_server_cb);
     esp_ble_mesh_register_light_client_callback(example_ble_mesh_lightness_client_model_cb);
     esp_ble_mesh_register_custom_model_callback(example_ble_mesh_custom_model_cb);
 
@@ -1298,47 +1155,20 @@ static esp_err_t ble_mesh_init_t(void)
                 ESP_LOGE(TAG, "success to bind AppKey to light client addr: 0x%04x",prov_key.app_idx);
 
             }
-              err = esp_ble_mesh_provisioner_bind_app_key_to_local_model(PROV_OWN_ADDR, prov_key.app_idx,
-                    ESP_BLE_MESH_MODEL_ID_GEN_ONOFF_CLI, ESP_BLE_MESH_CID_NVAL);
-            if (err != ESP_OK) {
-                ESP_LOGE(TAG, "Provisioner bind local model appkey failed");
-                
-            }
-    else{
-                ESP_LOGE(TAG, "success to bind AppKey to onoff client addr: 0x%04x",prov_key.app_idx);
+deleteBleDevice(10);
+deleteBleDevice(14);
+    //    err= esp_ble_mesh_model_subscribe_group_addr(PROV_OWN_ADDR,ESP_BLE_MESH_CID_NVAL,ESP_BLE_MESH_MODEL_ID_LIGHT_CTL_CLI,0xC000);
+        ESP_LOGE(TAG, "group addr subscribe: %d",err);
+   esp_timer_create_args_t unprov_pkg_args = {
+		.callback = endPkgRec,
+		.dispatch_method = ESP_TIMER_TASK,
+		.name = "RecTimer"
+	};
+	esp_timer_create(&unprov_pkg_args, &pkgTimer);
 
-            }
-   
-        //     uint8_t delAddr[]={0xdd,0xdd,0xc8,0xf0,0x9e,0xba,0x2d,0x72,0,0,0,0,0,0,0,0};
-        //     esp_ble_mesh_device_delete_t del;
-        //   memcpy(del.uuid, delAddr, 16);
-        //     del.flag=1;
-        //     err=esp_ble_mesh_provisioner_delete_dev(&del);
-        //       if (err == ESP_OK) {
-        //         ESP_LOGI(TAG, "success deleted");
-                
-        //     }
-        //     else{
-        //          ESP_LOGE(TAG, "not deleted");
-            // }
-            // delAddr[0]=0xc8;
-            // delAddr[1]=0xf0;
-            // delAddr[2]=0x9e;
-            // delAddr[3]=0xba;
-            // delAddr[4]=0x2d;
-            // delAddr[5]=0x72;
-            // memcpy(del.addr, delAddr, 6);
-            //  err=esp_ble_mesh_provisioner_delete_dev(&del);
-            //  if (err == ESP_OK) {
-            //     ESP_LOGI(TAG, "success deleted");
-                
-            // }
-            // else{
-            //      ESP_LOGE(TAG, "not deleted");
-            // }
-            // c8f09eba2d72
-    // ESP_LOGI(TAG, "BLE Mesh Provisioner initialized");
-
+    //   ESP_LOGI(TAG, "bt_mesh_clear_rpl");
+    //         bt_mesh_clear_rpl();
+    //         bt_mesh_clear_seq();
     return err;
 }
 
@@ -1348,7 +1178,7 @@ void ble_mesh_init(void)
 
     ESP_LOGI(TAG, "Initializing...");
 ESP_LOGI(TAG,"transmit pwr %d",esp_ble_tx_power_get(ESP_BLE_PWR_TYPE_ADV));
-//  err=esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_ADV, 6);
+ err=esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_ADV, 7);
 ESP_LOGI(TAG,"transmit pwr %d and set err ",esp_ble_tx_power_get(ESP_BLE_PWR_TYPE_ADV));
 //    err = nvs_flash_init();
 //    if (err == ESP_ERR_NVS_NO_FREE_PAGES) {
@@ -1356,7 +1186,7 @@ ESP_LOGI(TAG,"transmit pwr %d and set err ",esp_ble_tx_power_get(ESP_BLE_PWR_TYP
 //        err = nvs_flash_init();
 //    }
 //    ESP_ERROR_CHECK(err);
-    ble_setup();
+    ble_mssg_queue_setup();
     err = bluetooth_init();
     if (err) {
         ESP_LOGE(TAG, "esp32_bluetooth_init failed (err %d)", err);
@@ -1371,4 +1201,5 @@ ESP_LOGI(TAG,"transmit pwr %d and set err ",esp_ble_tx_power_get(ESP_BLE_PWR_TYP
         ESP_LOGE(TAG, "Bluetooth mesh init failed (err %d)", err);
     }
     esp_ble_mesh_client_model_init(&vnd_models[0]);
+
 }

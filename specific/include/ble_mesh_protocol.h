@@ -24,5 +24,5 @@ typedef struct {
 } set_t;
 
 void pushAckToQueue(nodeAck ackw);
-uint8_t sendAndReceiveBleData(uint8_t ,uint16_t ,uint8_t );
-void ble_setup();
+uint8_t sendAndReceiveBleData(uint16_t ,uint16_t ,uint8_t );
+void ble_mssg_queue_setup();

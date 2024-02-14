@@ -56,7 +56,7 @@ int8_t nvs_get_dev_id(char *dev_id) {
 		pairs[pair_count].length = NVS_VAL_DEVICE_ID_LEN;
 		pair_count++;
 	}
-
+printf("before get dev id");
 	return (nvs_get_pairs(NVS_PART_SYSTEM, NVS_NAMESPACE_DEVICE_CRED, NVS_TYPE_STR, pair_count, pairs));
 }
 
